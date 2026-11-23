@@ -1,0 +1,10 @@
+{
+  "provider": "cryptopro",
+  "pin": "",
+  "algorithm": "2001",
+  "curve": "1.2.643.2.2.35.1",
+  "valid_until": "2030-12-31",
+  "container_name": "example-cryptopro-2001",
+  "key_usage": "sign",
+  "backup_key": false
+}

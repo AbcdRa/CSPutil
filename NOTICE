@@ -1,0 +1,16 @@
+cspcombine is a combined, rewritten version of two local projects:
+
+  * vipnet-extract-data / ViPNet extraction and container builder
+    (https://github.com/kmvi/vipnet-extract-data)
+  * cp-extract / ExtractPkey2, CryptoPro file-container extraction
+    (MIT License, Copyright (c) 2017 kmvi)
+
+The Streebog lookup tables in cspcombine_lib/streebog_tables.py are copied
+from the vipnet project.  The container layouts and algorithm conventions
+follow the reference C# and Python implementations in those projects.
+
+The CryptoPro container check-value formulas were cross-checked against the
+open-source WebCrypto GOST project (waves-enterprise/crypto-gost-js) and
+validated against the stock CryptoPro CSP with csptest.
+
+The original project directories were not modified.
