@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            python: "3.8"
+          - os: ubuntu-22.04
+            python: "3.12"
+          - os: windows-2022
+            python: "3.8"
+          - os: windows-2022
+            python: "3.12"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+
+      - name: CLI smoke test
+        run: python cspcombine --version
+
+      - name: Self-test (algorithms and round-trip)
+        if: matrix.os == 'ubuntu-22.04' && matrix.python == '3.12'
+        run: python cspcombine selftest

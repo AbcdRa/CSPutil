@@ -1,0 +1,257 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, for example v1.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Run tests
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  build-linux:
+    name: Build Linux x86_64
+    needs: test
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyInstaller
+        run: python3 -m pip install --upgrade pip "pyinstaller==6.11.1"
+
+      - name: Build one-file executable
+        run: >
+          python3 -m PyInstaller --onefile --console --noupx --clean --noconfirm
+          --name cspcombine --distpath dist --workpath build --specpath build
+          --collect-submodules cspcombine_lib cspcombine
+
+      - name: Smoke test
+        run: |
+          ./dist/cspcombine --version
+          ./dist/cspcombine create examples/cryptopro-2001.json -o /tmp/cspcombine-smoke
+          ./dist/cspcombine export -container /tmp/cspcombine-smoke -o /tmp/cspcombine-smoke.pem
+          ./dist/cspcombine inspect -container /tmp/cspcombine-smoke >/dev/null
+
+      - name: Stage release file
+        run: |
+          mkdir -p release
+          cp dist/cspcombine release/cspcombine-linux-x86_64
+          chmod +x release/cspcombine-linux-x86_64
+
+      - name: Upload Linux binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-binary
+          path: release/cspcombine-linux-x86_64
+          if-no-files-found: error
+
+  build-win10:
+    name: Build Windows 10 x86_64
+    needs: test
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyInstaller
+        run: python -m pip install --upgrade pip "pyinstaller==6.11.1"
+
+      - name: Build one-file executable
+        run: >
+          python -m PyInstaller --onefile --console --noupx --clean --noconfirm
+          --name cspcombine --distpath dist --workpath build --specpath build
+          --collect-submodules cspcombine_lib cspcombine
+
+      - name: Smoke test
+        shell: pwsh
+        run: |
+          .\dist\cspcombine.exe --version
+          .\dist\cspcombine.exe create examples\cryptopro-2001.json -o "$env:RUNNER_TEMP\cspcombine-smoke"
+          .\dist\cspcombine.exe export -container "$env:RUNNER_TEMP\cspcombine-smoke" -o "$env:RUNNER_TEMP\cspcombine-smoke.pem"
+          if (-not (Test-Path "$env:RUNNER_TEMP\cspcombine-smoke.pem")) { throw "export failed" }
+
+      - name: Stage release file
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          Copy-Item dist\cspcombine.exe release\cspcombine-windows10-x86_64.exe
+
+      - name: Upload Windows 10 binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows10-binary
+          path: release/cspcombine-windows10-x86_64.exe
+          if-no-files-found: error
+
+  build-win7:
+    name: Build Windows 7 x86_64
+    needs: test
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.8
+        uses: actions/setup-python@v5
+        with:
+          # Python 3.8 is the last CPython line that supports Windows 7.
+          python-version: "3.8.10"
+
+      - name: Install PyInstaller 4.x
+        run: python -m pip install "pyinstaller==4.10"
+
+      - name: Build one-file executable
+        run: >
+          python -m PyInstaller --onefile --console --noupx --clean --noconfirm
+          --name cspcombine --distpath dist --workpath build --specpath build
+          --collect-submodules cspcombine_lib cspcombine
+
+      - name: Smoke test
+        shell: pwsh
+        run: |
+          .\dist\cspcombine.exe --version
+          .\dist\cspcombine.exe create examples\cryptopro-2001.json -o "$env:RUNNER_TEMP\cspcombine-smoke7"
+          .\dist\cspcombine.exe export -container "$env:RUNNER_TEMP\cspcombine-smoke7" -o "$env:RUNNER_TEMP\cspcombine-smoke7.pem"
+          if (-not (Test-Path "$env:RUNNER_TEMP\cspcombine-smoke7.pem")) { throw "export failed" }
+
+      - name: Stage release file
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          Copy-Item dist\cspcombine.exe release\cspcombine-windows7-x86_64.exe
+
+      - name: Upload Windows 7 binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows7-binary
+          path: release/cspcombine-windows7-x86_64.exe
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub release
+    needs: [build-linux, build-win10, build-win7]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: Check version against tag
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          VERSION=$(python3 -c "import cspcombine_lib; print(cspcombine_lib.__version__)")
+          echo "release tag: $TAG"
+          echo "module version: $VERSION"
+          if [ "$TAG" != "v$VERSION" ]; then
+            echo "::warning title=Version mismatch::Tag $TAG does not match cspcombine_lib.__version__ ($VERSION)"
+          fi
+
+      - name: Package binaries
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import tarfile
+          import zipfile
+          from pathlib import Path
+
+          tag = os.environ["TAG"]
+          prefix = f"cspcombine-{tag}"
+          release = Path("release")
+          docs = [Path("README.md"), Path("LICENSE"), Path("NOTICE")]
+          examples = sorted(Path("examples").glob("*"))
+
+          def add_docs_tar(archive):
+              for doc in docs:
+                  archive.add(doc, arcname=f"{prefix}/{doc.name}")
+              for example in examples:
+                  archive.add(example, arcname=f"{prefix}/examples/{example.name}")
+
+          def add_docs_zip(archive):
+              for doc in docs:
+                  archive.write(doc, arcname=f"{prefix}/{doc.name}")
+              for example in examples:
+                  archive.write(example, arcname=f"{prefix}/examples/{example.name}")
+
+          linux_src = release / "cspcombine-linux-x86_64"
+          with tarfile.open(release / f"{prefix}-linux-x86_64.tar.gz", "w:gz") as archive:
+              def linux_filter(info):
+                  if info.name == f"{prefix}/cspcombine":
+                      info.mode = 0o755
+                  return info
+              archive.add(linux_src, arcname=f"{prefix}/cspcombine", filter=linux_filter)
+              add_docs_tar(archive)
+
+          for platform in ("windows10", "windows7"):
+              src = release / f"cspcombine-{platform}-x86_64.exe"
+              with zipfile.ZipFile(release / f"{prefix}-{platform}-x86_64.zip",
+                                   "w", zipfile.ZIP_DEFLATED) as archive:
+                  archive.write(src, arcname=f"{prefix}/cspcombine.exe")
+                  add_docs_zip(archive)
+          PY
+
+      - name: Create source archives
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          git archive --format=tar.gz --prefix="cspcombine-$TAG/" \
+            -o "release/cspcombine-$TAG-source.tar.gz" HEAD
+          git archive --format=zip --prefix="cspcombine-$TAG/" \
+            -o "release/cspcombine-$TAG-source.zip" HEAD
+
+      - name: Generate checksums
+        run: |
+          cd release
+          sha256sum * > SHA256SUMS
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: cspcombine ${{ github.event.inputs.tag || github.ref_name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: release/*

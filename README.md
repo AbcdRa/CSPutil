@@ -257,6 +257,42 @@ tools/check_with_csp.sh ./container [pin]
 
 ---
 
+## CI/CD и релизы
+
+В репозитории два workflow:
+
+* `.github/workflows/ci.yml` — тесты на Linux и Windows, Python 3.8 и 3.12;
+* `.github/workflows/release.yml` — сборка и публикация релиза.
+
+Релиз запускается по тегу `v*` или вручную:
+
+```bash
+git tag v1.1.0
+git push origin v1.1.0
+```
+
+Либо через GitHub Actions → Release → Run workflow, указав тег.
+
+В релиз попадают:
+
+| Артефакт | Описание |
+|---|---|
+| `cspcombine-<tag>-linux-x86_64.tar.gz` | Linux x86_64, один исполняемый файл |
+| `cspcombine-<tag>-windows10-x86_64.zip` | Windows 10/11 x86_64, один `.exe` |
+| `cspcombine-<tag>-windows7-x86_64.zip` | Windows 7 SP1 x86_64, один `.exe` |
+| `cspcombine-<tag>-source.tar.gz` / `.zip` | исходники |
+| `SHA256SUMS` | контрольные суммы |
+
+Особенности сборок:
+
+* Linux-бинарник собирается на Ubuntu 22.04 (glibc 2.35+). Для старых
+  дистрибутивов используйте source-архив или соберите PyInstaller локально.
+* Windows 10/11 собирается на Python 3.12 и PyInstaller 6.x.
+* Windows 7 собирается на Python 3.8.10 и PyInstaller 4.10 — последняя
+  комбинация, рассчитанная на Win7. Нужен Windows 7 SP1 и обновление
+  Universal C Runtime (KB2999226), как и для самого Python 3.8.
+* Совмещённый `sign+exchange` контейнер не поддерживается.
+
 ## Тесты
 
 ```bash
@@ -306,6 +342,7 @@ cspcombine_lib/
   streebog_tables.py        # таблицы Streebog (скопированы из vipnet)
 examples/                   # примеры JSON и JSON Schema
 tools/check_with_csp.sh     # проверка контейнера штатным csptest
+.github/workflows/          # CI и сборка релизов
 tests/                      # unit-тесты
 ```
 
