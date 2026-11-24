@@ -130,6 +130,11 @@
       "enum": ["sign", "exchange"],
       "default": "sign"
     },
+    "exportable": {
+      "description": "Разрешить экспорт закрытого ключа средствами КриптоПро (атрибут pkaExportable).",
+      "type": "boolean",
+      "default": false
+    },
     "extension_oid": {
       "description": "Явный OID расширения срока действия (КриптоПро).",
       "type": "string"

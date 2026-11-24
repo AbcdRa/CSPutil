@@ -200,6 +200,9 @@ class Container:
             self.agreement_oid = OID_DH_2012_512
         else:
             raise ValueError(f"неподдерживаемый алгоритм CryptoPro: {alg_oid}")
+        self.key_attributes = None
+        if params.children and params.children[0].tag == 0x03:
+            self.key_attributes = params.children[0].value
         self.curve = curve_by_oid(self.param_set)
         self._private_key_cache: int | None = None
         self.name = None
@@ -218,6 +221,15 @@ class Container:
     @property
     def password_protected(self) -> bool:
         return bool(self.hmac_password and self.hmac_password != b"\0" * 4)
+
+    @property
+    def exportable(self) -> bool | None:
+        if self.key_attributes is None:
+            return None
+        data = self.key_attributes[1:]
+        if not data:
+            return False
+        return bool(data[0] & 0x80)
 
     @property
     def usage(self) -> str:
@@ -400,6 +412,26 @@ def certificate_matches_key(cert_value: str, curve, scalar: int) -> bool | None:
     return expected in (little, big)
 
 
+def _private_key_attributes(exportable: bool, exchange: bool) -> bytes:
+    """Encode CryptoPro GostPrivateKeyAttributes as a BIT STRING.
+
+    Bit 0 is pkaExportable, bit 2 is pkaExchange (see GostPrivateKeyAttributes
+    in the CryptoPro container ASN.1 schema).
+    """
+    bits = []
+    if exportable:
+        bits.append(0)
+    if exchange:
+        bits.append(2)
+    if not bits:
+        return der_bit_string(b"")
+    highest = max(bits)
+    value = 0
+    for bit in bits:
+        value |= 1 << (7 - bit)
+    return der_bit_string(bytes([value]), unused=7 - highest)
+
+
 def _extension(oid: str, moment: datetime) -> bytes:
     when = generalized_time(moment).encode("ascii")
     time_sequence = der_sequence(der(0x81, when))
@@ -443,8 +475,7 @@ def build_container(spec: Spec) -> dict[str, bytes]:
                          "создайте отдельные контейнеры для подписи и обмена")
     is_exchange = usage in ("exchange", "exc", "обмен")
     algorithm_oid = AGREEMENT_OIDS[kind] if is_exchange else sign_oid
-    key_attributes = (der_bit_string(b"\x20", unused=5) if is_exchange
-                      else der_bit_string(b""))
+    key_attributes = _private_key_attributes(spec.exportable, is_exchange)
     default_extension = ("1.2.643.2.2.37.3.10" if is_exchange
                          else "1.2.643.2.2.37.3.9")
     public = spec.public

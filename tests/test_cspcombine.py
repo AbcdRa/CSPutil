@@ -17,8 +17,9 @@ from cspcombine_lib.cryptopro import (  # noqa: E402
     pack_zip,
     read_container_source,
 )
+from cspcombine_lib.cli import _path_arg  # noqa: E402
 from cspcombine_lib.keys import parse_private_key, private_key_pem  # noqa: E402
-from cspcombine_lib.schema import load_spec  # noqa: E402
+from cspcombine_lib.schema import _load_json, load_spec  # noqa: E402
 from cspcombine_lib.vipnet import (  # noqa: E402
     build_container as build_vipnet,
     extract as extract_vipnet,
@@ -74,6 +75,31 @@ class SpecTests(unittest.TestCase):
                 "private_key": "key.pem",
             })
             self.assertEqual(new_spec.scalar, spec.scalar)
+
+    def test_windows_paths_in_json(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "spec.json"
+            cases = {
+                r'{"private_key":"C:\\Users\\mihail\\key.pem"}':
+                    r"C:\Users\mihail\key.pem",
+                r'{"private_key":"C:\Users\mihail\key.pem"}':
+                    r"C:\Users\mihail\key.pem",
+                r'{"private_key":"C:\temp\key.pem"}':
+                    r"C:\temp\key.pem",
+                r'{"private_key":"C:\users\mihail\key.pem"}':
+                    r"C:\users\mihail\key.pem",
+                r'{"private_key":"D:\vm\DLL\key.pem"}':
+                    r"D:\vm\DLL\key.pem",
+            }
+            for document, expected in cases.items():
+                path.write_text(document, encoding="utf-8")
+                self.assertEqual(_load_json(path)["private_key"], expected)
+
+    def test_windows_cli_path_with_trailing_quote(self):
+        self.assertEqual(str(_path_arg('D:\\vm\\DLL\\test"')),
+                         "D:\\vm\\DLL\\test")
+        self.assertEqual(str(_path_arg('"D:\\vm\\DLL\\test"')),
+                         "D:\\vm\\DLL\\test")
 
 
 class ContainerTests(unittest.TestCase):
@@ -160,6 +186,28 @@ class ContainerTests(unittest.TestCase):
             tag, body, _ = der_item(files["masks.key"])
             mask, salt, mac = [value for tag, value in der_children(body)]
             self.assertEqual(gost_mac(salt, mask, SBOX_Z), mac)
+
+    def test_cryptopro_key_attributes(self):
+        from cspcombine_lib.der import der_children, der_item
+        cases = [
+            ({}, b"\x00"),                              # no attributes
+            ({"exportable": True}, b"\x07\x80"),        # pkaExportable
+            ({"key_usage": "exchange"}, b"\x05\x20"),   # pkaExchange
+            ({"exportable": True, "key_usage": "exchange"},
+             b"\x05\xa0"),                              # exportable exchange
+        ]
+        with tempfile.TemporaryDirectory() as temp:
+            for extra, expected in cases:
+                spec = self._cryptopro_spec(Path(temp), **extra)
+                files = build_cryptopro(spec)
+                _, header_body, _ = der_item(files["header.key"])
+                outer = dict(der_children(header_body))
+                inner = dict(der_children(outer[0x30]))
+                attributes = dict(der_children(inner[0x30]))[0x03]
+                self.assertEqual(attributes, expected)
+                container = CryptoProContainer(files, "")
+                self.assertEqual(container.exportable,
+                                 bool(extra.get("exportable", False)))
 
     def test_cryptopro_2001_roundtrip(self):
         with tempfile.TemporaryDirectory() as temp:

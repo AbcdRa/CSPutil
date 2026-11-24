@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import secrets
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -135,6 +136,7 @@ class Spec:
 
     # CryptoPro-specific values.
     certificate_der: str = ""
+    exportable: bool = False
     key_usage: str = "sign"
     extension_oid: str | None = None
     container_type_oid: str = "1.2.643.2.2.37.2.1"
@@ -220,9 +222,56 @@ def _random_pin() -> str:
     return f"{secrets.randbelow(100_000_000):08d}"
 
 
+_CONTROL_ESCAPES = {
+    "\t": "\\t", "\n": "\\n", "\r": "\\r", "\b": "\\b", "\f": "\\f",
+}
+
+
+def _repair_path_strings(value: Any) -> Any:
+    """Undo JSON escape interpretation inside Windows paths.
+
+    ``C:\\temp\\key.pem`` is valid JSON and turns ``\\t`` into a tab.  Such
+    control characters cannot occur in a real Windows path, so restore the
+    intended backslash sequence.
+    """
+    if isinstance(value, dict):
+        return {key: _repair_path_strings(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_repair_path_strings(item) for item in value]
+    if isinstance(value, str) and re.match(r"^(?:[A-Za-z]:|\\\\)", value):
+        for character, escaped in _CONTROL_ESCAPES.items():
+            value = value.replace(character, escaped)
+    return value
+
+
+def _load_json(path: Path) -> Any:
+    """Load JSON, tolerating unescaped Windows path separators.
+
+    Strict JSON requires ``C:\\\\Users\\\\...``.  Many Windows users write
+    ``C:\\Users\\...``, which fails with an "Invalid \\escape" error.  If the
+    document fails only for that reason, escape the offending backslashes and
+    retry once.
+    """
+    text = path.read_text(encoding="utf-8-sig")
+    try:
+        return _repair_path_strings(json.loads(text))
+    except json.JSONDecodeError as error:
+        if "Invalid \\escape" in error.msg or "Invalid \\u" in error.msg:
+            fixed = re.sub(r'\\(?!["\\/bfnrt]|u[0-9a-fA-F]{4})', r'\\\\', text)
+            try:
+                return _repair_path_strings(json.loads(fixed))
+            except json.JSONDecodeError:
+                pass
+        raise ValueError(
+            f"Некорректный JSON в {path}: {error}. "
+            "Для Windows-путей используйте прямые слэши (C:/Users/...) "
+            "или двойные обратные (C:\\\\Users\\\\...)."
+        ) from error
+
+
 def load_spec(path: Path, pin_override: str | None = None,
               provider_override: str | None = None) -> Spec:
-    data = json.loads(path.read_text(encoding="utf-8"))
+    data = _load_json(path)
     if not isinstance(data, dict):
         raise ValueError("JSON-спецификация должна быть объектом")
     provider = resolve_provider(data, provider_override)
@@ -350,6 +399,9 @@ def load_spec(path: Path, pin_override: str | None = None,
             spec.certificate_der = str(cert_path)
     spec.key_usage = str(cfg_get(data, "key_usage", "usage",
                                  default="sign")).lower()
+    spec.exportable = _as_bool(cfg_get(
+        data, "exportable", "key.exportable", "key_parameters.exportable",
+        default=False))
     extension_oid = cfg_get(data, "extension_oid", "key.extension_oid",
                             default=None)
     spec.extension_oid = str(extension_oid) if extension_oid else None

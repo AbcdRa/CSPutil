@@ -121,6 +121,9 @@ ln -sf "$PWD/cspcombine" ~/.local/bin/cspcombine
 # КриптоПро в каталог
 ./cspcombine create examples/cryptopro.json -o ./new_cp_container
 
+# КриптоПро с экспортируемым ключом
+./cspcombine create examples/cryptopro-exportable.json -o ./new_exportable_container
+
 # КриптоПро в stdout (tar)
 ./cspcombine create examples/cryptopro.json > ./new_cp_container.tar
 # при необходимости распаковать в каталог:
@@ -132,6 +135,21 @@ mkdir -p ./new_cp_container && tar xf ./new_cp_container.tar -C ./new_cp_contain
 
 Сгенерированный PIN и параметры выводятся в **stderr**, поэтому не мешают
 перенаправлению бинарного контейнера в stdout.
+
+### Windows-пути в JSON
+
+Можно использовать любой из вариантов:
+
+```json
+"private_key": "C:/Users/mihail/key.pem"
+"private_key": "C:\\Users\\mihail\\key.pem"
+"private_key": "C:\Users\mihail\key.pem"
+```
+
+Одиночные обратные слэши, которые не являются корректными JSON-escape
+последовательностями, теперь исправляются автоматически. Если в пути
+встречается `\t`, `\n` и т.п., программа также восстанавливает их как
+разделители пути.
 
 ### Минимальная спецификация
 
@@ -189,6 +207,7 @@ mkdir -p ./new_cp_container && tar xf ./new_cp_container.tar -C ./new_cp_contain
 | `defence.flags` | `0` | флаги `defenceInfo` (ViPNet) |
 | `certificate` / `certificate_der` | нет | PEM, hex или путь к DER-сертификату (КриптоПро); при создании проверяется соответствие закрытому ключу |
 | `key_usage` | `sign` | `sign` или `exchange` (КриптоПро); совмещённый контейнер не поддерживается |
+| `exportable` | `false` | пометить ключ КриптоПро как экспортируемый (`pkaExportable`) |
 | `extension_oid` | по `key_usage` | явный OID расширения срока действия (КриптоПро) |
 | `backup_key` | `true` | создавать `masks2.key`/`primary2.key` (КриптоПро) |
 
@@ -208,6 +227,9 @@ mkdir -p ./new_cp_container && tar xf ./new_cp_container.tar -C ./new_cp_contain
   * `hmacPassword` — verifier PIN-кода;
   * `hmacRandom` в `masks.key`/`masks2.key`;
   * `primaryFP` — отпечаток открытого ключа.
+
+  По умолчанию ключ неэкспортируемый; `"exportable": true` выставляет
+  атрибут `pkaExportable` так же, как это делает штатный CSP.
 
   Контейнеры **2001** и **2012-256** (кривые CryptoPro-A/XchA и TC26-256,
   с PIN и без PIN, ключи `sign` и `exchange`) проверены штатным
@@ -267,8 +289,8 @@ tools/check_with_csp.sh ./container [pin]
 Релиз запускается по тегу `v*` или вручную:
 
 ```bash
-git tag v1.1.0
-git push origin v1.1.0
+git tag v1.1.1
+git push origin v1.1.1
 ```
 
 Либо через GitHub Actions → Release → Run workflow, указав тег.

@@ -26,6 +26,25 @@ class CliError(Exception):
     pass
 
 
+def _path_arg(value: str) -> Path:
+    """Normalize a path received from a Windows command line.
+
+    A trailing backslash before a closing quote can leave the quote in the
+    argument (``-o "D:\\work\\test\\"`` -> ``D:\\work\\test"``).  Strip stray
+    wrapping quotes so this common Windows invocation works.
+    """
+    text = str(value).strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in "\"'":
+        text = text[1:-1]
+    if text.endswith('"') or text.endswith("'"):
+        text = text[:-1]
+    if text.startswith('"') or text.startswith("'"):
+        text = text[1:]
+    if not text:
+        raise CliError("пустой путь")
+    return Path(text).expanduser()
+
+
 def _detect_provider(path: Path, override: str | None) -> str:
     if override and override != "auto":
         return resolve_provider({}, override)
@@ -62,7 +81,7 @@ def _read_text_output(data: bytes, output: Path | None) -> None:
 
 
 def command_export(args: argparse.Namespace) -> int:
-    container_path = Path(args.container).expanduser()
+    container_path = _path_arg(args.container)
     provider = _detect_provider(container_path, args.provider)
     pin = args.pin
     if pin is None:
@@ -94,7 +113,7 @@ def command_export(args: argparse.Namespace) -> int:
                           "проверки PIN, правильность PIN не проверена",
                           file=sys.stderr)
 
-    _read_text_output(pem, Path(args.output).expanduser() if args.output else None)
+    _read_text_output(pem, _path_arg(args.output) if args.output else None)
     return 0
 
 
@@ -138,6 +157,9 @@ def _print_create_info(spec: Spec, output: Path | None, fmt: str) -> None:
     print(f"Криптопровайдер: {spec.provider}", file=sys.stderr)
     print(f"Кривая: {spec.curve.oid} ({spec.curve.name})", file=sys.stderr)
     print(f"Алгоритм: {spec.kind}", file=sys.stderr)
+    if spec.provider == "cryptopro":
+        print(f"Экспортируемый: {'да' if spec.exportable else 'нет'}",
+              file=sys.stderr)
     print(f"Действителен до: {spec.valid_until.isoformat()}", file=sys.stderr)
     if spec.key_generated:
         print("Закрытый ключ: сгенерирован", file=sys.stderr)
@@ -152,10 +174,14 @@ def _print_create_info(spec: Spec, output: Path | None, fmt: str) -> None:
 
 
 def command_create(args: argparse.Namespace) -> int:
-    spec_path = Path(args.spec).expanduser()
+    spec_path = _path_arg(args.spec)
     if not spec_path.is_file():
         raise CliError(f"JSON-спецификация не найдена: {spec_path}")
     spec = load_spec(spec_path, pin_override=args.pin, provider_override=args.provider)
+
+    if spec.provider == "vipnet" and spec.exportable:
+        print("Предупреждение: exportable относится к КриптоПро; "
+              "для ViPNet флаг игнорируется", file=sys.stderr)
 
     if spec.provider == "cryptopro" and spec.certificate_der:
         matches = certificate_matches_key(spec.certificate_der, spec.curve,
@@ -167,7 +193,7 @@ def command_create(args: argparse.Namespace) -> int:
             print("Предупреждение: не удалось извлечь ГОСТ-ключ из "
                   "сертификата; соответствие не проверено", file=sys.stderr)
 
-    output = Path(args.output).expanduser() if args.output else None
+    output = _path_arg(args.output) if args.output else None
     fmt = args.format
     if output is None and sys.stdout.isatty() and fmt == "auto":
         raise CliError("укажите -o ФАЙЛ/КАТАЛОГ или перенаправьте stdout "
@@ -198,7 +224,7 @@ def command_create(args: argparse.Namespace) -> int:
     if args.key_out:
         pem = private_key_pem(spec.scalar, spec.curve.oid, spec.digest_oid,
                               spec.key_algorithm_oid)
-        key_out = Path(args.key_out).expanduser()
+        key_out = _path_arg(args.key_out)
         key_out.write_bytes(pem)
         try:
             key_out.chmod(0o600)
@@ -210,7 +236,7 @@ def command_create(args: argparse.Namespace) -> int:
 
 
 def command_inspect(args: argparse.Namespace) -> int:
-    path = Path(args.container).expanduser()
+    path = _path_arg(args.container)
     provider = _detect_provider(path, args.provider)
     if provider == "vipnet":
         entry = read_container(path)
@@ -236,6 +262,7 @@ def command_inspect(args: argparse.Namespace) -> int:
             "provider": "cryptopro",
             "container_name": container.name,
             "usage": container.usage,
+            "exportable": container.exportable,
             "kind": container.kind,
             "curve": container.param_set,
             "digest": container.digest_set,
@@ -253,6 +280,7 @@ def command_inspect(args: argparse.Namespace) -> int:
             "provider": "Провайдер",
             "container_name": "Имя контейнера",
             "usage": "Назначение ключа",
+            "exportable": "Экспортируемый",
             "password_protected": "Защищён PIN-кодом",
             "kind": "Тип ключа",
             "curve": "Кривая",
